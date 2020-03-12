@@ -3,11 +3,18 @@ package com.example.testScheduledLock.service;
 
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.core.SchedulerLock;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.integration.redis.util.RedisLockRegistry;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 @Component
 @Slf4j
@@ -15,6 +22,11 @@ public class SynchronousScheduler {
     //    -Dserver.port=8081
     @Value("${server.port}")
     private String port;
+
+    @Autowired
+    private RedisLockRegistry redisLockRegistry;
+
+    private boolean flag = true;
 
     /**
      * lockAtLeastForString的作用是为了防止在任务开始之初由于各个服务器同名任务的服务器时间差，启动时间差等这些造成的一些问题，有了这个时间设置后，
@@ -26,12 +38,46 @@ public class SynchronousScheduler {
      *至于是否带有string后缀，只是2种表达方式，数字类型的就是毫秒数，字符串类型的就有自己固定的格式 ，例如：PT30S  30s时间设置，单位可以是S,M,H
      */
     @Scheduled(cron = "0 */1 * * * ?")
-    @SchedulerLock(name = "scheduledController_notice", lockAtLeastForString = "PT2M", lockAtMostForString = "PT2M")
+//    @SchedulerLock(name = "scheduledController_notice", lockAtLeastForString = "PT2M", lockAtMostForString = "PT2M")
     public void notice() {
         try {
-            log.info("＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝" + port + "- 执行定时器 scheduledController_notice|" + new Date());
+            log.info("＝＝{}＝{} 执行定时器 scheduledController_notice", getCurrentTime(), port);
         } catch (Exception e) {
             log.error("异常信息:", e);
         }
+    }
+
+    @Scheduled(cron = "*/1 * * * * ?")
+    public void testRedisLockRegistry() {
+        if (flag) {
+            test();
+        }
+    }
+
+    public void test() {
+        flag = false;
+        for(int i = 0; i < 100; i++) {
+            try {
+                String lockKey = "lock-" + i;
+                log.info("＝＝{}＝{} 执行test | lockKey={}", getCurrentTime(), port, lockKey);
+                Lock lock = redisLockRegistry.obtain(lockKey);
+                boolean b1 = lock.tryLock(10, TimeUnit.SECONDS);
+                log.info("＝＝{}＝{} 执行test | lockKey={} | b={}", getCurrentTime(), port, lockKey, b1);
+                if (b1) {
+                    TimeUnit.MINUTES.sleep(10);
+                    log.info("＝＝{}＝{} 执行test | lockKey={} 任务执行完毕", getCurrentTime(), port, lockKey);
+                    lock.unlock();
+                    log.info("＝＝{}＝{} 执行test | lockKey={} 锁已删除", getCurrentTime(), port, lockKey);
+                }
+            } catch (InterruptedException e) {
+
+            }
+        }
+    }
+
+    private String getCurrentTime() {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        Date now = new Date();
+        return simpleDateFormat.format(now);
     }
 }
